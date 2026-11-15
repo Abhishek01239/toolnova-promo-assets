@@ -1,0 +1,6 @@
+numpy>=2.0
+pillow>=10.0
+scipy>=1.11
+moderngl>=5.10
+kokoro-onnx>=0.4
+soundfile>=0.12
