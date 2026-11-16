@@ -17,7 +17,7 @@ import re
 import subprocess
 import numpy as np
 
-from .voice import strip_tags
+from .voice import strip_tags, speakable
 
 MODEL_DIR = os.environ.get("KOKORO_DIR", os.path.join(os.path.dirname(__file__), "..", "models"))
 
@@ -96,7 +96,7 @@ def synthesize(lines, voice="pip", speed=None, lang="en-us", lead_in=0.12):
         chunks = [c.strip() for c in re.split(r"(?<=\.\.\.)\s+|(?<=[.!?])\s+(?=[A-Z])", text) if c.strip()]
         pieces = []
         for ci, chunk in enumerate(chunks):
-            c, sr = k.create(chunk, voice=vstyle, speed=base_speed * sp_mult, lang=lang)
+            c, sr = k.create(speakable(chunk), voice=vstyle, speed=base_speed * sp_mult, lang=lang)
             c = _trim(c, sr)
             walk = CHUNK_WALK[ci % len(CHUNK_WALK)] if len(chunks) > 1 else 0.0
             c = _ffmpeg_process(c, sr, semitones=preset["pitch"] + st + walk, gain_db=gain)
