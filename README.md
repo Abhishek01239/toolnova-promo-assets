@@ -17,7 +17,7 @@ packages, and downloads the free Kokoro voice model into `models/` (~350 MB, git
 ## Voices
 | Option | Cost | Notes |
 |---|---|---|
-| Kokoro (`mcengine/tts.py`) | Free, local | Apache-2.0, OK for monetized videos. Voices: `am_puck`, `am_michael`, `am_fenrir`, `am_adam`… |
+| Kokoro (`mcengine/tts.py`) | Free, local | Apache-2.0, OK for monetized videos. Default preset `pip`: Eric+Fenrir blend, pitch-tuned, emotion-driven delivery, mic chain. Raw voices like `am_puck` also work. |
 | ElevenLabs | Credits | More expressive; supports `[excited]`-style tags. Word timings from ElevenLabs Scribe. |
 
 ## Modules (`mcengine/`)
