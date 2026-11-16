@@ -12,6 +12,19 @@ def strip_tags(line):
     return re.sub(r"\[[^\]]*\]\s*", "", line).strip()
 
 
+# Real abbreviations that SHOULD be spelled out letter by letter.
+ACRONYMS = {"TNT", "MLG", "OK", "TV", "XP", "HP", "AFK", "OP", "NPC", "PVP", "DIY", "USA", "UK", "AI"}
+
+
+def speakable(text):
+    """Text for the TTS engine: ALL-CAPS emphasis words ('LIT', 'SKY', 'BOOM') become normal
+    words so they are read, not spelled out. Captions keep the original caps."""
+    def fix(m):
+        w = m.group(0)
+        return w if w in ACRONYMS else w.lower()
+    return re.sub(r"\b[A-Z]{2,}\b", fix, text)
+
+
 def script_words(lines):
     """-> list of dicts {word, line} with display text taken from the script."""
     out = []
