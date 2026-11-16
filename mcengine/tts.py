@@ -84,6 +84,9 @@ def _ffmpeg_process(a, sr, semitones=0.0, gain_db=0.0, master=False):
 
 def synthesize(lines, voice="pip", speed=None, lang="en-us", lead_in=0.12):
     """-> (audio float32 mono, sample_rate, words[{word,line,start,end}])"""
+    if voice == "puck_classic":                 # exact voice of Hardcore Parts 2-5
+        from . import tts_classic
+        return tts_classic.synthesize(lines, voice="am_puck", lead_in=lead_in)
     from kokoro_onnx import Kokoro
     k = Kokoro(os.path.join(MODEL_DIR, "kokoro-v1.0.onnx"), os.path.join(MODEL_DIR, "voices-v1.0.bin"))
     vstyle, preset = _voice_style(k, voice)
