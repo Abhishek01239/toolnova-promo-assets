@@ -506,3 +506,48 @@ class Mixer:
 
 def write_wav(path, x):
     wavfile.write(path, SR, (np.clip(x, -1, 1) * 32767).astype(np.int16))
+
+
+def sfx_groan(seed=0, dur=1.1):
+    """Low zombie moan: buzzy source through two vowel formants with wobble."""
+    t = _t(dur)
+    r = _rng(seed)
+    f0 = r.uniform(70, 95) * (1 + 0.06 * np.sin(2 * np.pi * r.uniform(3, 5) * t)) * (1 - 0.15 * t / dur)
+    src = signal.sawtooth(2 * np.pi * np.cumsum(f0) / SR)
+    x = bandpass(src, 300, 900) * 1.4 + bandpass(src, 1000, 1500) * 0.5
+    e = np.sin(np.pi * np.clip(t / dur, 0, 1)) ** 0.7
+    return stereo(x * e * 0.8, width=0.2)
+
+
+def sfx_creak(seed=0, dur=0.9):
+    t = _t(dur)
+    f = 220 + 160 * np.sin(np.pi * t / dur) + 30 * np.sin(2 * np.pi * 23 * t)
+    x = signal.sawtooth(2 * np.pi * np.cumsum(f) / SR) * (0.5 + 0.5 * (np.sin(2 * np.pi * 31 * t) > 0))
+    return stereo(bandpass(x, 300, 2500) * np.sin(np.pi * t / dur) * 0.6)
+
+
+def sfx_crackle(seed=0, dur=1.6):
+    t = _t(dur)
+    r = _rng(seed)
+    x = lowpass(r.normal(size=len(t)), 1200) * 0.5
+    for _ in range(int(60 * dur)):
+        i = r.integers(0, len(t) - 200)
+        x[i:i + 200] += r.normal(size=200) * np.exp(-np.arange(200) / 25) * r.uniform(0.3, 1.0)
+    e = np.minimum(1, t * 6) * np.minimum(1, (dur - t) * 4)
+    return stereo(highpass(x, 300) * e, width=0.4)
+
+
+def sfx_water(seed=0, dur=2.5):
+    t = _t(dur)
+    r = _rng(seed)
+    x = bandpass(r.normal(size=len(t)), 400, 3000) * (0.6 + 0.4 * np.sin(2 * np.pi * 1.3 * t))
+    for _ in range(int(30 * dur)):
+        s = int(r.uniform(0, dur - 0.06) * SR)
+        n = int(0.04 * SR)
+        tt = np.arange(n) / SR
+        x[s:s + n] += np.sin(2 * np.pi * (r.uniform(400, 1100) + 2500 * tt) * tt) * np.exp(-tt * 70) * 0.3
+    e = np.minimum(1, t * 3) * np.minimum(1, (dur - t) * 2)
+    return stereo(x * e * 0.7, width=0.5)
+
+
+SFX.update({"groan": sfx_groan, "creak": sfx_creak, "crackle": sfx_crackle, "water": sfx_water})
