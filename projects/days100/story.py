@@ -214,7 +214,7 @@ class Film:
         if name == "under":
             p = os.path.join(C, "under.npz")
             if not os.path.exists(p):
-                shutil.copy(os.path.join(HERE, "..", "day2", "work", "cache", "under.npz"), p)
+                shutil.copy(os.path.join(HERE, "assets", "under_cave.npz"), p)
             d = np.load(p)
             return d["o"], d["t"]
         if name == "nether":
