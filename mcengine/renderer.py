@@ -9,6 +9,7 @@ import moderngl
 from PIL import Image, ImageFilter
 from . import textures as tx
 from .geometry import perspective, look_at, VERT
+from . import style
 
 MAIN_VS = """
 #version 330
@@ -27,6 +28,7 @@ uniform sampler2D atlas;
 uniform vec3 cam; uniform vec3 sun_dir; uniform vec3 sun_col; uniform vec3 amb_col;
 uniform vec3 fog_col; uniform float fog_start; uniform float fog_end;
 uniform vec3 flash_col; uniform float exposure;
+uniform float sun_power; uniform float rim_strength; uniform vec3 rim_col; uniform vec3 shadow_col;
 in vec2 uv; in vec3 norm; in float ao; in float flash; in float alpha; in float emis; in vec3 wpos;
 out vec4 frag;
 void main(){
@@ -35,8 +37,16 @@ void main(){
     vec3 n = normalize(norm);
     float face = 0.80 + 0.20 * n.y - 0.08 * abs(n.x);
     float diff = max(dot(n, sun_dir), 0.0);
-    vec3 light = amb_col * face + sun_col * diff * 0.55;
+    vec3 amb = mix(amb_col, amb_col * shadow_col, 1.0 - diff);
+    vec3 light = amb * face + sun_col * diff * sun_power;
     vec3 col = t.rgb * light * ao * exposure;
+    if (rim_strength > 0.0) {
+        vec3 v = normalize(cam - wpos);
+        float fres = pow(1.0 - max(dot(n, v), 0.0), 2.2);
+        float back = clamp(dot(-v, sun_dir) * 0.6 + 0.4, 0.0, 1.0);
+        float lit = max(dot(n, sun_dir), 0.0) * 0.6 + 0.4;
+        col += rim_col * fres * back * lit * rim_strength * ao;
+    }
     col = mix(col, t.rgb * 1.25, emis);
     col = mix(col, flash_col, clamp(flash, 0.0, 1.0));
     float d = length(wpos - cam);
@@ -54,6 +64,8 @@ SKY_FS = """
 #version 330
 uniform mat4 inv_vp; uniform vec3 zenith; uniform vec3 horizon; uniform vec3 below;
 uniform vec3 sun_dir; uniform vec3 moon_dir; uniform float stars; uniform float sun_vis; uniform float moon_vis;
+uniform float sun_size; uniform float halo; uniform vec3 halo_col; uniform float clouds;
+uniform vec3 cloud_lit; uniform vec3 cloud_dark;
 in vec2 ndc; out vec4 frag;
 float hash(vec3 p){ return fract(sin(dot(p, vec3(127.1, 311.7, 74.7))) * 43758.5453); }
 float square_disc(vec3 d, vec3 c, float size){
@@ -71,7 +83,20 @@ void main(){
     col = mix(col, below, smoothstep(0.0, -0.35, h));
     float sd = max(dot(d, sun_dir), 0.0);
     col += vec3(1.0, 0.75, 0.45) * pow(sd, 18.0) * 0.45 * sun_vis;
-    col = mix(col, vec3(1.0, 0.97, 0.75), square_disc(d, sun_dir, 0.07) * sun_vis);
+    if (halo > 0.0) {
+        col += halo_col * (pow(sd, 8.0) * 0.35 + pow(sd, 60.0) * 0.9) * halo * sun_vis;
+        col += halo_col * smoothstep(0.18, 0.0, abs(h - 0.02)) * 0.22 * halo * sun_vis * pow(sd, 2.0);
+    }
+    if (clouds > 0.0 && h > 0.015) {
+        vec2 q = d.xz / (h + 0.06) * 1.6;
+        vec2 cell = floor(q * vec2(2.0, 4.0));
+        float n = hash(vec3(cell, 7.0));
+        float n2 = hash(vec3(floor(q * vec2(1.0, 2.0)), 3.0));
+        float c = step(0.66, n * 0.6 + n2 * 0.5) * smoothstep(0.015, 0.09, h) * smoothstep(0.55, 0.2, h);
+        vec3 cc = mix(cloud_dark, cloud_lit, clamp(pow(sd, 3.0) * 1.4 + 0.15, 0.0, 1.0));
+        col = mix(col, cc, c * clouds);
+    }
+    col = mix(col, vec3(1.0, 0.97, 0.75), square_disc(d, sun_dir, sun_size) * sun_vis);
     float md = square_disc(d, moon_dir, 0.05);
     col = mix(col, vec3(0.88, 0.9, 1.0), md * moon_vis);
     col += vec3(0.6, 0.65, 1.0) * pow(max(dot(d, moon_dir), 0.0), 40.0) * 0.25 * moon_vis;
@@ -181,6 +206,9 @@ class Renderer:
     def render(self, fs):
         """fs: FrameSpec-like dict. Returns HxWx3 uint8."""
         ctx = self.ctx
+        self.frame_no = getattr(self, "frame_no", -1) + 1
+        if style.ACTIVE:
+            fs = style.apply(fs, self.frame_no / 30.0)
         cam = fs["camera"]
         eye = np.array(cam["eye"], np.float32)
         view = look_at(eye, cam["target"], roll=cam.get("roll", 0.0))
@@ -206,6 +234,12 @@ class Renderer:
         s["stars"].value = sky.get("stars", 0.0)
         s["sun_vis"].value = sky.get("sun_vis", 1.0)
         s["moon_vis"].value = sky.get("moon_vis", 0.0)
+        s["sun_size"].value = sky.get("sun_size", 0.07)
+        s["halo"].value = sky.get("halo", 0.0)
+        s["halo_col"].value = tuple(sky.get("halo_col", (1.0, 0.6, 0.3)))
+        s["clouds"].value = sky.get("clouds", 0.0)
+        s["cloud_lit"].value = tuple(sky.get("cloud_lit", (1.0, 0.7, 0.45)))
+        s["cloud_dark"].value = tuple(sky.get("cloud_dark", (0.45, 0.3, 0.6)))
         self.sky_vao.render(moderngl.TRIANGLES)
 
         # world
@@ -219,6 +253,10 @@ class Renderer:
         p["sun_col"].value = tuple(light["sun"])
         p["amb_col"].value = tuple(light["ambient"])
         p["exposure"].value = light.get("exposure", 1.0)
+        p["sun_power"].value = light.get("sun_power", 0.55)
+        p["rim_strength"].value = light.get("rim", 0.0)
+        p["rim_col"].value = tuple(light.get("rim_col", (1.0, 0.7, 0.4)))
+        p["shadow_col"].value = tuple(light.get("shadow_col", (1.0, 1.0, 1.0)))
         fog = fs["fog"]
         for prog in (p, self.part):
             prog["fog_col"].value = tuple(fog["color"])
@@ -253,37 +291,103 @@ class Renderer:
         ctx.copy_framebuffer(self.fbo, self.fbo_ms)
         raw = self.fbo.read(components=3)
         img = np.frombuffer(raw, np.uint8).reshape(self.h, self.w, 3)[::-1]
-        return post_process(img, fs.get("post", {}))
+        post = dict(fs.get("post", {}))
+        if post.get("god_rays", 0) > 0 and sky.get("sun_vis", 1.0) > 0.05:
+            sp = vp @ np.array([*(eye + sun * 500.0), 1.0], np.float32)
+            if sp[3] > 0:
+                post["_sun_px"] = ((sp[0] / sp[3] * 0.5 + 0.5) * self.w, (0.5 - sp[1] / sp[3] * 0.5) * self.h)
+        return post_process(img, post)
+
+
+def _god_rays(img_u8, sun_px, strength):
+    """Screen-space light shafts: radial blur of the bright parts toward the sun.
+    Works at 1/6 resolution and returns a 1/8-size float32 layer to add."""
+    h, w = img_u8.shape[:2]
+    sw, sh = w // 6, h // 6
+    small = np.asarray(Image.fromarray(img_u8).resize((sw, sh), Image.BILINEAR), np.float32) * (1 / 255.0)
+    cx, cy = sun_px[0] / 6.0, sun_px[1] / 6.0
+    yy, xx = np.mgrid[0:sh, 0:sw].astype(np.float32)
+    near = np.exp(-(((xx - cx) ** 2 + (yy - cy) ** 2) / (0.35 * sw) ** 2))[..., None]
+    lum = small.max(axis=2, keepdims=True)
+    src = small * (np.clip((lum - 0.82) / 0.18, 0, 1) * near)
+    acc = np.zeros_like(src)
+    decay, wsum = 1.0, 0.0
+    for i in range(16):
+        k = 1.0 - i * 0.033
+        sx = np.clip(cx + (xx - cx) * k, 0, sw - 1).astype(np.int32)
+        sy = np.clip(cy + (yy - cy) * k, 0, sh - 1).astype(np.int32)
+        acc += src[sy, sx] * decay
+        wsum += decay
+        decay *= 0.9
+    acc *= strength / wsum
+    up = Image.fromarray((np.clip(acc, 0, 1) * 255).astype(np.uint8)).filter(ImageFilter.GaussianBlur(1.5))
+    return np.asarray(up.resize((w // 8, h // 8), Image.BILINEAR), np.float32) * (1 / 255.0)
+
+
+_VIG = {}
+
+
+def _vignette(h, w):
+    if (h, w) not in _VIG:
+        yy = np.linspace(-1, 1, h, dtype=np.float32)[:, None]
+        xx = np.linspace(-1, 1, w, dtype=np.float32)[None, :]
+        _VIG[(h, w)] = np.clip(xx * xx * 0.8 + yy * yy * 0.6 - 0.25, 0, 1)[..., None]
+    return _VIG[(h, w)]
 
 
 def post_process(img, post):
-    """Bloom, colour grade, vignette, white flash. Operates on uint8 HxWx3."""
-    f = img.astype(np.float32) / 255.0
+    """Bloom, colour grade, vignette, white flash. Operates on uint8 HxWx3.
+
+    Cinematic extras (all optional): bloom_threshold, bloom_wide, split toning
+    (shadow_tint / highlight_tint), god_rays (needs _sun_px, set by the renderer).
+    """
+    f = img.astype(np.float32) * (1 / 255.0)
     bloom = post.get("bloom", 0.35)
     h, w = img.shape[:2]
+    glow = None                                         # all glow layers summed at 1/8 size, upscaled once
     if bloom > 0:
+        thr = post.get("bloom_threshold", 0.72)
         small = Image.fromarray(img).resize((w // 8, h // 8), Image.BILINEAR)
         sa = np.asarray(small).astype(np.float32) / 255.0
         lum = sa.max(axis=2, keepdims=True)
-        sa = sa * np.clip((lum - 0.72) / 0.28, 0, 1)
-        sb = Image.fromarray((sa * 255).astype(np.uint8)).filter(ImageFilter.GaussianBlur(6))
-        sb = np.asarray(sb.resize((w, h), Image.BILINEAR)).astype(np.float32) / 255.0
-        f = f + sb * bloom * 1.6
-    # gentle contrast/saturation grade
+        sa = sa * np.clip((lum - thr) / (1.0 - thr), 0, 1)
+        sa8 = Image.fromarray((sa * 255).astype(np.uint8))
+        glow = np.asarray(sa8.filter(ImageFilter.GaussianBlur(6)), np.float32) * (bloom * 1.6 / 255.0)
+        wide = post.get("bloom_wide", 0.0)
+        if wide > 0:
+            sw = sa8.resize((w // 32, h // 32), Image.BILINEAR).filter(ImageFilter.GaussianBlur(4))
+            glow += np.asarray(sw.resize((w // 8, h // 8), Image.BILINEAR), np.float32) * (wide * 2.2 / 255.0)
+    if post.get("god_rays", 0) > 0 and "_sun_px" in post:
+        rays = _god_rays(img, post["_sun_px"], post["god_rays"])
+        glow = rays if glow is None else glow + rays
+    if glow is not None:
+        g8 = Image.fromarray((np.clip(glow, 0, 1) * 255).astype(np.uint8)).resize((w, h), Image.BILINEAR)
+        f += np.asarray(g8, np.float32) * (1 / 255.0)
+    # contrast/saturation grade (in place, float32)
     sat = post.get("saturation", 1.12)
     g = f.mean(axis=2, keepdims=True)
-    f = g + (f - g) * sat
+    f -= g
+    f *= sat
+    f += g
     c = post.get("contrast", 1.06)
-    f = (f - 0.5) * c + 0.5
+    f -= 0.5
+    f *= c
+    f += 0.5
+    st, ht = post.get("shadow_tint"), post.get("highlight_tint")
+    if st is not None or ht is not None:
+        lum = np.clip((g - 0.5) * c + 0.5, 0, 1)        # mean after grade (saturation keeps the mean)
+        mult = np.ones_like(f)
+        if st is not None:
+            mult += (np.array(st, np.float32) - 1) * (1 - lum) ** 2
+        if ht is not None:
+            mult += (np.array(ht, np.float32) - 1) * lum ** 2
+        f *= mult
     tint = post.get("tint")
     if tint is not None:
-        f = f * np.array(tint, np.float32)
+        f *= np.array(tint, np.float32)
     vig = post.get("vignette", 0.35)
     if vig > 0:
-        yy = np.linspace(-1, 1, h, dtype=np.float32)[:, None]
-        xx = np.linspace(-1, 1, w, dtype=np.float32)[None, :]
-        r2 = xx * xx * 0.8 + yy * yy * 0.6
-        f = f * (1 - vig * np.clip(r2 - 0.25, 0, 1))[..., None]
+        f *= 1 - vig * _vignette(h, w)
     wf = post.get("white_flash", 0.0)
     if wf > 0:
         f = f + (1 - f) * wf
