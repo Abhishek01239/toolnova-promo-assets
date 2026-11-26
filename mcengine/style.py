@@ -1,6 +1,6 @@
-"""Optional "cinematic" look, switched on with the environment variable MC_STYLE=cinematic.
+"""The "cinematic" look. ON by default; set MC_STYLE=classic for the old bright look.
 
-Nothing changes for existing episodes unless the variable is set. When it is:
+When active:
 - lighting.environment() uses richer sky presets (deep blue day, orange-to-purple
   sunset, violet night) - see lighting.CINE_PRESETS;
 - apply() (called by the renderer on every frame) adds a big glowing sun with halo,
@@ -14,7 +14,7 @@ import os
 
 import numpy as np
 
-ACTIVE = os.environ.get("MC_STYLE", "").strip().lower() == "cinematic"
+ACTIVE = os.environ.get("MC_STYLE", "cinematic").strip().lower() != "classic"
 
 POST = dict(bloom=0.36, bloom_threshold=0.76, bloom_wide=0.12, god_rays=0.32,
             saturation=1.24, contrast=1.10, vignette=0.40,
