@@ -20,6 +20,23 @@ PRESETS = [
 ]
 
 
+# Cinematic presets (MC_STYLE=cinematic): richer, more saturated, orange/purple palette.
+CINE_PRESETS = [
+    dict(zenith=(0.10, 0.26, 0.78), horizon=(0.98, 0.80, 0.62), below=(0.55, 0.50, 0.70),
+         sun_dir=(0.45, 0.42, -0.6), sun_vis=1.0, moon_vis=0.0, stars=0.0,
+         sun=(1.08, 0.92, 0.74), ambient=(0.60, 0.62, 0.82), fog=(0.62, 0.66, 0.88), exposure=0.95),
+    dict(zenith=(0.16, 0.08, 0.38), horizon=(1.00, 0.46, 0.14), below=(0.42, 0.18, 0.34),
+         sun_dir=(0.85, 0.10, -0.5), sun_vis=1.0, moon_vis=0.0, stars=0.25,
+         sun=(0.98, 0.90, 0.70), ambient=(0.62, 0.62, 0.84), fog=(0.62, 0.34, 0.50), exposure=1.08),
+    dict(zenith=(0.03, 0.01, 0.10), horizon=(0.20, 0.07, 0.34), below=(0.08, 0.03, 0.16),
+         sun_dir=(-0.4, -0.7, 0.5), sun_vis=0.0, moon_vis=1.0, stars=1.0,
+         sun=(0.50, 0.44, 0.95), ambient=(0.34, 0.28, 0.62), fog=(0.12, 0.05, 0.22), exposure=1.35),
+    dict(zenith=(0.20, 0.14, 0.50), horizon=(1.00, 0.52, 0.48), below=(0.45, 0.28, 0.48),
+         sun_dir=(-0.85, 0.14, 0.45), sun_vis=1.0, moon_vis=0.2, stars=0.15,
+         sun=(1.15, 0.72, 0.58), ambient=(0.48, 0.40, 0.66), fog=(0.76, 0.48, 0.58), exposure=1.05),
+]
+
+
 def _mix(a, b, t):
     if isinstance(a, tuple):
         return tuple(float(x * (1 - t) + y * t) for x, y in zip(a, b))
@@ -31,7 +48,9 @@ def environment(phase, fog_start=60.0, fog_end=300.0):
     i = min(int(phase), len(PRESETS) - 2)
     t = phase - i
     t = t * t * (3 - 2 * t)
-    a, b = PRESETS[i], PRESETS[i + 1]
+    from . import style
+    table = CINE_PRESETS if style.ACTIVE else PRESETS
+    a, b = table[i], table[i + 1]
     p = {k: _mix(a[k], b[k], t) for k in a}
     sun = np.array(p["sun_dir"]); sun /= np.linalg.norm(sun)
     light_dir = sun if sun[1] > 0.05 else -sun          # moonlight at night
