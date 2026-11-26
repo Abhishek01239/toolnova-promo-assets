@@ -299,30 +299,40 @@ class Renderer:
         return post_process(img, post)
 
 
-def _god_rays(f, sun_px, strength):
-    """Screen-space light shafts: radial blur of the bright parts toward the sun."""
-    h, w = f.shape[:2]
-    sw, sh = w // 4, h // 4
-    small = np.asarray(Image.fromarray((np.clip(f, 0, 1) * 255).astype(np.uint8)).resize((sw, sh), Image.BILINEAR))
-    small = small.astype(np.float32) / 255.0
-    lum = small.max(axis=2, keepdims=True)
-    cx, cy = sun_px[0] / 4.0, sun_px[1] / 4.0
+def _god_rays(img_u8, sun_px, strength):
+    """Screen-space light shafts: radial blur of the bright parts toward the sun.
+    Works at 1/6 resolution and returns a 1/8-size float32 layer to add."""
+    h, w = img_u8.shape[:2]
+    sw, sh = w // 6, h // 6
+    small = np.asarray(Image.fromarray(img_u8).resize((sw, sh), Image.BILINEAR), np.float32) * (1 / 255.0)
+    cx, cy = sun_px[0] / 6.0, sun_px[1] / 6.0
     yy, xx = np.mgrid[0:sh, 0:sw].astype(np.float32)
     near = np.exp(-(((xx - cx) ** 2 + (yy - cy) ** 2) / (0.35 * sw) ** 2))[..., None]
-    src = small * np.clip((lum - 0.82) / 0.18, 0, 1) * near
+    lum = small.max(axis=2, keepdims=True)
+    src = small * (np.clip((lum - 0.82) / 0.18, 0, 1) * near)
     acc = np.zeros_like(src)
-    n, decay, wsum = 24, 1.0, 0.0
-    for i in range(n):
-        k = 1.0 - i * 0.022
+    decay, wsum = 1.0, 0.0
+    for i in range(16):
+        k = 1.0 - i * 0.033
         sx = np.clip(cx + (xx - cx) * k, 0, sw - 1).astype(np.int32)
         sy = np.clip(cy + (yy - cy) * k, 0, sh - 1).astype(np.int32)
         acc += src[sy, sx] * decay
         wsum += decay
-        decay *= 0.93
-    acc /= wsum
-    rays = np.asarray(Image.fromarray((np.clip(acc, 0, 1) * 255).astype(np.uint8))
-                      .filter(ImageFilter.GaussianBlur(2)).resize((w, h), Image.BILINEAR)).astype(np.float32) / 255.0
-    return f + rays * strength
+        decay *= 0.9
+    acc *= strength / wsum
+    up = Image.fromarray((np.clip(acc, 0, 1) * 255).astype(np.uint8)).filter(ImageFilter.GaussianBlur(1.5))
+    return np.asarray(up.resize((w // 8, h // 8), Image.BILINEAR), np.float32) * (1 / 255.0)
+
+
+_VIG = {}
+
+
+def _vignette(h, w):
+    if (h, w) not in _VIG:
+        yy = np.linspace(-1, 1, h, dtype=np.float32)[:, None]
+        xx = np.linspace(-1, 1, w, dtype=np.float32)[None, :]
+        _VIG[(h, w)] = np.clip(xx * xx * 0.8 + yy * yy * 0.6 - 0.25, 0, 1)[..., None]
+    return _VIG[(h, w)]
 
 
 def post_process(img, post):
@@ -331,48 +341,53 @@ def post_process(img, post):
     Cinematic extras (all optional): bloom_threshold, bloom_wide, split toning
     (shadow_tint / highlight_tint), god_rays (needs _sun_px, set by the renderer).
     """
-    f = img.astype(np.float32) / 255.0
+    f = img.astype(np.float32) * (1 / 255.0)
     bloom = post.get("bloom", 0.35)
     h, w = img.shape[:2]
+    glow = None                                         # all glow layers summed at 1/8 size, upscaled once
     if bloom > 0:
         thr = post.get("bloom_threshold", 0.72)
         small = Image.fromarray(img).resize((w // 8, h // 8), Image.BILINEAR)
         sa = np.asarray(small).astype(np.float32) / 255.0
         lum = sa.max(axis=2, keepdims=True)
         sa = sa * np.clip((lum - thr) / (1.0 - thr), 0, 1)
-        sb = Image.fromarray((sa * 255).astype(np.uint8)).filter(ImageFilter.GaussianBlur(6))
-        sb = np.asarray(sb.resize((w, h), Image.BILINEAR)).astype(np.float32) / 255.0
-        f = f + sb * bloom * 1.6
+        sa8 = Image.fromarray((sa * 255).astype(np.uint8))
+        glow = np.asarray(sa8.filter(ImageFilter.GaussianBlur(6)), np.float32) * (bloom * 1.6 / 255.0)
         wide = post.get("bloom_wide", 0.0)
         if wide > 0:
-            sw = Image.fromarray((sa * 255).astype(np.uint8)).resize((w // 32, h // 32), Image.BILINEAR)
-            sw = sw.filter(ImageFilter.GaussianBlur(4))
-            sw = np.asarray(sw.resize((w, h), Image.BILINEAR)).astype(np.float32) / 255.0
-            f = f + sw * wide * 2.2
+            sw = sa8.resize((w // 32, h // 32), Image.BILINEAR).filter(ImageFilter.GaussianBlur(4))
+            glow += np.asarray(sw.resize((w // 8, h // 8), Image.BILINEAR), np.float32) * (wide * 2.2 / 255.0)
     if post.get("god_rays", 0) > 0 and "_sun_px" in post:
-        f = _god_rays(f, post["_sun_px"], post["god_rays"])
-    # gentle contrast/saturation grade
+        rays = _god_rays(img, post["_sun_px"], post["god_rays"])
+        glow = rays if glow is None else glow + rays
+    if glow is not None:
+        g8 = Image.fromarray((np.clip(glow, 0, 1) * 255).astype(np.uint8)).resize((w, h), Image.BILINEAR)
+        f += np.asarray(g8, np.float32) * (1 / 255.0)
+    # contrast/saturation grade (in place, float32)
     sat = post.get("saturation", 1.12)
     g = f.mean(axis=2, keepdims=True)
-    f = g + (f - g) * sat
+    f -= g
+    f *= sat
+    f += g
     c = post.get("contrast", 1.06)
-    f = (f - 0.5) * c + 0.5
+    f -= 0.5
+    f *= c
+    f += 0.5
     st, ht = post.get("shadow_tint"), post.get("highlight_tint")
     if st is not None or ht is not None:
-        lum = np.clip(f.mean(axis=2, keepdims=True), 0, 1)
+        lum = np.clip((g - 0.5) * c + 0.5, 0, 1)        # mean after grade (saturation keeps the mean)
+        mult = np.ones_like(f)
         if st is not None:
-            f = f * (1 + (np.array(st, np.float32) - 1) * (1 - lum) ** 2)
+            mult += (np.array(st, np.float32) - 1) * (1 - lum) ** 2
         if ht is not None:
-            f = f * (1 + (np.array(ht, np.float32) - 1) * lum ** 2)
+            mult += (np.array(ht, np.float32) - 1) * lum ** 2
+        f *= mult
     tint = post.get("tint")
     if tint is not None:
-        f = f * np.array(tint, np.float32)
+        f *= np.array(tint, np.float32)
     vig = post.get("vignette", 0.35)
     if vig > 0:
-        yy = np.linspace(-1, 1, h, dtype=np.float32)[:, None]
-        xx = np.linspace(-1, 1, w, dtype=np.float32)[None, :]
-        r2 = xx * xx * 0.8 + yy * yy * 0.6
-        f = f * (1 - vig * np.clip(r2 - 0.25, 0, 1))[..., None]
+        f *= 1 - vig * _vignette(h, w)
     wf = post.get("white_flash", 0.0)
     if wf > 0:
         f = f + (1 - f) * wf

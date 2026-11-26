@@ -1,7 +1,7 @@
 """Before/after demo of the cinematic style on a hero shot (Pip on a cliff at sunset).
 
 usage: python scripts/style_demo.py [out.png]
-Renders the same 1080x1920 frame with the classic look and with MC_STYLE=cinematic.
+Renders the same 1080x1920 frame with the classic look (MC_STYLE=classic) and the cinematic look (default).
 """
 import os
 import sys
